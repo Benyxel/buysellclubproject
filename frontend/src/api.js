@@ -89,6 +89,49 @@ API.interceptors.request.use(
 
     config.withCredentials = true;
 
+    // Prevent accidental POST/PUT/PATCH/DELETE to the page origin (common with GitHub Pages)
+    try {
+      const unsafeMethods = ["post", "put", "patch", "delete"];
+      const methodIsUnsafe = unsafeMethods.includes(
+        (config.method || "").toLowerCase()
+      );
+
+      // Determine whether the request will target the same origin as the currently served page
+      const targetUrl = config.baseURL
+        ? new URL(config.baseURL.replace(/\/+$|$/, ""), window.location.origin)
+        : null;
+      const targetOrigin = targetUrl ? targetUrl.origin : null;
+      const pageOrigin = window.location.origin;
+
+      const isUsingRelativeUrl =
+        !config.baseURL && !config.url?.startsWith("http");
+      const isTargetSameOrigin = targetOrigin === pageOrigin;
+
+      if (methodIsUnsafe && (isUsingRelativeUrl || isTargetSameOrigin)) {
+        const message =
+          "Blocked unsafe request: no backend base URL configured. Set VITE_API_BASE_URL to your backend URL so POST/PUT/PATCH/DELETE target the API, not the static host.";
+        console.error("[API Guard] ", message, {
+          attemptedMethod: config.method?.toUpperCase(),
+          attemptedUrl: config.url,
+          baseURL: config.baseURL,
+          pageOrigin,
+        });
+
+        // Reject request early with a descriptive error to avoid 405 on static hosts.
+        return Promise.reject({
+          message,
+          name: "ApiConfigurationError",
+          config,
+        });
+      }
+    } catch (e) {
+      // If URL parsing fails, continue and let the request run so that dev experience isn't blocked.
+      console.warn(
+        "[API Guard] URL parsing failed, skipping same-origin safety check",
+        e
+      );
+    }
+
     // Validate baseURL configuration
     if (!config.baseURL && !config.url.startsWith("http")) {
       console.warn(
