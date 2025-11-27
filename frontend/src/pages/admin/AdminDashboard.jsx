@@ -60,14 +60,7 @@ const AdminDashboard = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   // Initialize active section from URL or localStorage
-  const getInitialSection = () => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const sectionFromUrl = urlParams.get("section");
-    if (sectionFromUrl) return sectionFromUrl;
-
-    const savedSection = localStorage.getItem("adminActiveSection");
-    return savedSection || "dashboard";
-  };
+  const getInitialSection = () => "dashboard";
 
   // Initialize shipping submenu from URL or localStorage
   const getInitialShippingSubMenu = () => {
@@ -79,11 +72,27 @@ const AdminDashboard = () => {
     return savedSubMenu || "tracking";
   };
 
-  const [activeSection, setActiveSection] = useState(getInitialSection());
+  const [activeSection, setActiveSection] = useState(getInitialSection);
+  // After the initial mount (which always starts on "dashboard" to trigger the first load),
+  // respect any section provided via URL or localStorage.
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const sectionFromUrl = urlParams.get("section");
+    if (sectionFromUrl && sectionFromUrl !== "dashboard") {
+      setActiveSection(sectionFromUrl);
+      return;
+    }
+
+    const savedSection = localStorage.getItem("adminActiveSection");
+    if (savedSection && savedSection !== "dashboard") {
+      setActiveSection(savedSection);
+    }
+  }, []);
   const [darkMode, setDarkMode] = useState(false);
   const [shippingSubMenu, setShippingSubMenu] = useState(
     getInitialShippingSubMenu()
   );
+  const [trainingSubMenu, setTrainingSubMenu] = useState("paidCourses");
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -186,97 +195,22 @@ const AdminDashboard = () => {
     setDashboardLoading(true);
     setDashboardError(null);
     try {
-      // Users count
-      const usersResp = await API.get("/buysellapi/users/");
-      const users = Array.isArray(usersResp.data) ? usersResp.data : [];
-      const usersCount = users.length;
-
-      // Alipay payments total (admin endpoint returns total)
-      let alipayTotal = 0;
-      try {
-        const alipayResp = await API.get("/api/admin/alipay-payments", {
-          params: { page: 1, limit: 1 },
-        });
-        alipayTotal = Number(alipayResp?.data?.total || 0);
-      } catch (e) {
-        // If unauthorized or error, keep 0 and continue
-        console.warn("Failed to fetch Alipay total:", e?.response?.status || e);
-      }
-
-      // Orders total (admin endpoint returns all orders)
-      let ordersTotal = 0;
-      try {
-        const ordersResp = await API.get("/buysellapi/admin/orders/");
-        // Check if response is paginated or a direct array
-        if (ordersResp?.data?.count !== undefined) {
-          ordersTotal = Number(ordersResp.data.count);
-        } else if (Array.isArray(ordersResp?.data)) {
-          ordersTotal = ordersResp.data.length;
-        } else if (Array.isArray(ordersResp?.data?.results)) {
-          ordersTotal = Number(ordersResp.data.count || ordersResp.data.results.length);
-        }
-      } catch (e) {
-        console.warn(
-          "Failed to fetch orders total:",
-          e?.response?.status || e
-        );
-      }
-
-      // Buy4me requests total (admin endpoint returns all requests)
-      let buy4meRequestsTotal = 0;
-      try {
-        const buy4meResp = await API.get("/buysellapi/admin/buy4me-requests/");
-        if (Array.isArray(buy4meResp?.data)) {
-          buy4meRequestsTotal = buy4meResp.data.length;
-        } else if (buy4meResp?.data?.count !== undefined) {
-          buy4meRequestsTotal = Number(buy4meResp.data.count);
-        } else if (Array.isArray(buy4meResp?.data?.results)) {
-          buy4meRequestsTotal = Number(buy4meResp.data.count || buy4meResp.data.results.length);
-        }
-      } catch (e) {
-        console.warn(
-          "Failed to fetch buy4me requests total:",
-          e?.response?.status || e
-        );
-      }
-
-      // Shipping marks total (paginated list returns count)
-      let shippingMarksTotal = 0;
-      try {
-        const smResp = await API.get("/buysellapi/shipping-marks/", {
-          params: { page: 1, page_size: 1 },
-        });
-        // DRF pagination typically returns { count, next, previous, results }
-        shippingMarksTotal = Number(
-          smResp?.data?.count ??
-            (Array.isArray(smResp?.data) ? smResp.data.length : 0)
-        );
-      } catch (e) {
-        console.warn(
-          "Failed to fetch shipping marks total:",
-          e?.response?.status || e
-        );
-      }
-
-      // Current Alipay exchange rate (GHS -> CNY), format to 3 decimals
-      let alipayRate = null;
-      try {
-        const rateResp = await API.get("/buysellapi/alipay-exchange-rate/");
-        const raw = rateResp?.data?.ghs_to_cny;
-        if (raw || raw === 0) {
-          alipayRate = Number(raw).toFixed(3);
-        }
-      } catch (e) {
-        console.warn("Failed to fetch alipay rate:", e?.response?.status || e);
-      }
+      // Use a single lightweight admin endpoint that returns counts/aggregates
+      // so the dashboard doesn't need to fetch large lists or multiple
+      // resources sequentially.
+      const resp = await API.get("/buysellapi/admin/dashboard-summary/");
+      const data = resp?.data || {};
 
       setDashboardData({
-        totalUsers: usersCount,
-        totalOrders: ordersTotal,
-        totalAlipayPayments: alipayTotal,
-        totalBuy4meRequests: buy4meRequestsTotal,
-        totalShippingMarks: shippingMarksTotal,
-        exchangeRate: alipayRate,
+        totalUsers: data.totalUsers || 0,
+        totalOrders: data.totalOrders || 0,
+        totalAlipayPayments: data.totalAlipayPayments || 0,
+        totalBuy4meRequests: data.totalBuy4meRequests || 0,
+        totalShippingMarks: data.totalShippingMarks || 0,
+        exchangeRate:
+          data.exchangeRate !== undefined && data.exchangeRate !== null
+            ? data.exchangeRate
+            : null,
       });
     } catch (err) {
       console.error("Dashboard fetch error:", err);
@@ -313,7 +247,11 @@ const AdminDashboard = () => {
   }, [shippingSubMenu]);
 
   useEffect(() => {
-    if (activeSection === "dashboard") {
+    // Only fetch dashboard data the first time we visit the dashboard
+    // (or when dashboardData is explicitly cleared). This prevents
+    // repeated network requests every time the user clicks the
+    // Dashboard tab.
+    if (activeSection === "dashboard" && dashboardData == null) {
       fetchDashboardData();
     }
   }, [activeSection]);
@@ -377,7 +315,9 @@ const AdminDashboard = () => {
           const allSlugs = Array.from(
             new Set([...slugs, ...menuItems.map((m) => m.section)])
           );
-          setAllowedTabs(allSlugs.length > 0 ? allSlugs : menuItems.map((m) => m.section));
+          setAllowedTabs(
+            allSlugs.length > 0 ? allSlugs : menuItems.map((m) => m.section)
+          );
         } else {
           // Admins and regular users: ONLY show tabs that are explicitly assigned to them
           // No fallback - if no tabs are assigned, they see nothing
@@ -574,10 +514,48 @@ const AdminDashboard = () => {
             <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-6">
               Training Management
             </h2>
+            <div className="border-b border-gray-200 dark:border-gray-700 mb-6">
+              <div className="flex flex-wrap">
+                <button
+                  className={`py-3 px-6 font-medium text-sm rounded-t-lg mr-2 ${
+                    trainingSubMenu === "paidCourses"
+                      ? "bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 border-b-2 border-blue-600"
+                      : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"
+                  }`}
+                  onClick={() => setTrainingSubMenu("paidCourses")}
+                >
+                  <div className="flex items-center gap-2">
+                    <FaGraduationCap className="w-4 h-4" />
+                    <span>Paid Courses</span>
+                  </div>
+                </button>
+
+                <button
+                  className={`py-3 px-6 font-medium text-sm rounded-t-lg mr-2 ${
+                    trainingSubMenu === "bookings"
+                      ? "bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 border-b-2 border-blue-600"
+                      : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"
+                  }`}
+                  onClick={() => setTrainingSubMenu("bookings")}
+                >
+                  <div className="flex items-center gap-2">
+                    <FaCalendarAlt className="w-4 h-4" />
+                    <span>Training Bookings</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+
             <div className="space-y-12">
-              <section>
-                <PaidCourseManagement />
-              </section>
+              {trainingSubMenu === "paidCourses" ? (
+                <section>
+                  <PaidCourseManagement />
+                </section>
+              ) : (
+                <section>
+                  <TrainingManagement showCoursesTab={false} />
+                </section>
+              )}
             </div>
           </div>
         );

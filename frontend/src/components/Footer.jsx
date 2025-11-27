@@ -55,6 +55,11 @@ const Footer = () => {
                   Contact
                 </Link>
               </li>
+              <li>
+                <Link to="/Policies" className='text-gray-600 dark:text-gray-400 hover:text-primary transition-colors'>
+                  Policies & Compliance
+                </Link>
+              </li>
             </ul>
           </div>
 
@@ -112,11 +117,11 @@ const Footer = () => {
               © {new Date().getFullYear()} Buysellclub. All rights reserved.
             </p>
             <div className='flex gap-6 text-sm'>
-              <Link to="/privacy" className='text-gray-600 dark:text-gray-400 hover:text-primary transition-colors'>
-                Privacy Policy
+              <Link to="/Policies#compliance" className='text-gray-600 dark:text-gray-400 hover:text-primary transition-colors'>
+                Privacy & Data Policy
               </Link>
-              <Link to="/terms" className='text-gray-600 dark:text-gray-400 hover:text-primary transition-colors'>
-                Terms of Service
+              <Link to="/Policies#operations" className='text-gray-600 dark:text-gray-400 hover:text-primary transition-colors'>
+                Service Terms
               </Link>
             </div>
           </div>

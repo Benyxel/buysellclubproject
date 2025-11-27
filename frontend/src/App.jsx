@@ -4,6 +4,7 @@ import Home from "./pages/Home";
 import Shop from "./pages/Shop";
 import Services from "./pages/Services";
 import About from "./pages/About";
+import Policies from "./pages/Policies";
 import Checkout from "./pages/Checkout";
 import Cart from "./pages/Cart";
 import Buy4me from "./pages/Quicklinks/Buy4me";
@@ -93,6 +94,7 @@ function App() {
                   <Route path="/Shop" element={<Shop />} />
                   <Route path="/Services" element={<Services />} />
                   <Route path="/Contact" element={<Contact />} />
+                  <Route path="/Policies" element={<Policies />} />
                   <Route path="/About" element={<About />} />
                   <Route path="/product/:productId" element={<Product />} />
                   <Route path="/Trending" element={<Trending />} />

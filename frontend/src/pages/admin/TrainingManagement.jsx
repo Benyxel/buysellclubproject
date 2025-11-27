@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { FaEdit, FaTrash, FaPlus, FaVideo, FaEye, FaPlay, FaGraduationCap, FaCalendarAlt, FaClock, FaUser, FaEnvelope, FaPhone, FaCheckCircle, FaTimesCircle } from 'react-icons/fa';
 import { toast } from 'react-toastify';
 import {
@@ -10,8 +10,36 @@ import {
 } from '../../api';
 import API from '../../api';
 
-const TrainingManagement = () => {
-  const [activeTab, setActiveTab] = useState('bookings'); // 'bookings' or 'courses'
+const TrainingManagement = ({ showCoursesTab = true }) => {
+  const tabOptions = useMemo(() => {
+    const base = [
+      {
+        key: 'bookings',
+        label: (
+          <>
+            <FaCalendarAlt className="inline mr-2" />
+            Training Bookings
+          </>
+        ),
+      },
+    ];
+
+    if (showCoursesTab) {
+      base.push({
+        key: 'courses',
+        label: (
+          <>
+            <FaGraduationCap className="inline mr-2" />
+            Courses Management
+          </>
+        ),
+      });
+    }
+
+    return base;
+  }, [showCoursesTab]);
+
+  const [activeTab, setActiveTab] = useState('bookings');
   const [bookings, setBookings] = useState([]);
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -32,10 +60,16 @@ const TrainingManagement = () => {
   useEffect(() => {
     if (activeTab === 'bookings') {
       fetchBookings();
-    } else {
+    } else if (activeTab === 'courses' && showCoursesTab) {
       fetchCourses();
     }
-  }, [activeTab]);
+  }, [activeTab, showCoursesTab]);
+
+  useEffect(() => {
+    if (!showCoursesTab && activeTab === 'courses') {
+      setActiveTab('bookings');
+    }
+  }, [showCoursesTab, activeTab]);
 
   const fetchBookings = async () => {
     try {
@@ -169,28 +203,19 @@ const TrainingManagement = () => {
     <div className="container mx-auto px-4">
       {/* Tabs */}
       <div className="flex gap-4 mb-6 border-b border-gray-200 dark:border-gray-700">
-        <button
-          onClick={() => setActiveTab('bookings')}
-          className={`px-4 py-2 font-medium transition-colors ${
-            activeTab === 'bookings'
-              ? 'text-primary border-b-2 border-primary'
-              : 'text-gray-600 dark:text-gray-400 hover:text-primary'
-          }`}
-        >
-          <FaCalendarAlt className="inline mr-2" />
-          Training Bookings
-        </button>
-        <button
-          onClick={() => setActiveTab('courses')}
-          className={`px-4 py-2 font-medium transition-colors ${
-            activeTab === 'courses'
-              ? 'text-primary border-b-2 border-primary'
-              : 'text-gray-600 dark:text-gray-400 hover:text-primary'
-          }`}
-        >
-          <FaGraduationCap className="inline mr-2" />
-          Courses Management
-        </button>
+        {tabOptions.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={`px-4 py-2 font-medium transition-colors ${
+              activeTab === tab.key
+                ? 'text-primary border-b-2 border-primary'
+                : 'text-gray-600 dark:text-gray-400 hover:text-primary'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {/* Bookings Tab */}
@@ -281,7 +306,7 @@ const TrainingManagement = () => {
       )}
 
       {/* Courses Tab */}
-      {activeTab === 'courses' && (
+      {activeTab === 'courses' && showCoursesTab && (
         <div>
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Training Courses Management</h2>

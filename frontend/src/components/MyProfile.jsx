@@ -692,7 +692,7 @@ const MyProfile = () => {
 
       // Make API call to update profile
       const response = await axios.put(
-        `${API_BASE_URL}/api/user/profile`,
+        `${API_BASE_URL}/buysellapi/users/me/`,
         {
           name: userInfo.name,
           email: userInfo.email,
@@ -1375,7 +1375,7 @@ const MyProfile = () => {
       // First, get the latest user profile
       console.log("Fetching user profile data...");
       const profileResponse = await axios.get(
-        `${API_BASE_URL}/api/user/profile`,
+        `${API_BASE_URL}/buysellapi/users/me/`,
         {
           headers: {
             Authorization: `Bearer ${token}`,

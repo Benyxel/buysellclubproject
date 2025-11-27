@@ -5,36 +5,7 @@
     <link rel="icon" type="image/jpeg" href="/buysellclubproject/buysellt.jpg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>BuySellClub</title>
-    <!-- Runtime env injection: sets `window.__ENV__.VITE_API_BASE_URL` for static hosts. -->
-    <!--
-      To change the backend URL without rebuilding, either:
-      - Add a meta tag: <meta name="VITE_API_BASE_URL" content="https://api.example.com"> OR
-      - Edit the default value below to your backend URL, or replace it at deploy time.
-    -->
-    <script>
-      (function () {
-        try {
-          window.__ENV__ = window.__ENV__ || {};
-
-          // 1) Meta tag override (preferred for CI deploy pipelines)
-          var meta = document.querySelector('meta[name="VITE_API_BASE_URL"]');
-          if (meta && meta.content) {
-            window.__ENV__.VITE_API_BASE_URL = meta.content;
-            return;
-          }
-
-          // 2) If already injected by hosting env, keep it
-          if (window.__ENV__ && window.__ENV__.VITE_API_BASE_URL) return;
-
-          // 3) Fallback default (change this if you know the backend URL)
-          window.__ENV__.VITE_API_BASE_URL = "https://buysell-backend-production.up.railway.app";
-        } catch (e) {
-          // Don't block app if injection fails
-          console.warn("Runtime env injection failed:", e);
-        }
-      })();
-    </script>
-    <script type="module" crossorigin src="/buysellclubproject/assets/index-BnUKxQYI.js"></script>
+    <script type="module" crossorigin src="/buysellclubproject/assets/index-B4WRG5TK.js"></script>
     <link rel="stylesheet" crossorigin href="/buysellclubproject/assets/index-XrEATEaY.css">
   </head>
   <body>

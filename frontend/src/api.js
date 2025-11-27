@@ -1,86 +1,89 @@
 import axios from "axios";
 
-// Default to empty string so that when no VITE_API_BASE_URL is provided
-// the client uses relative URLs and the Vite dev proxy forwards requests
-// to the local backend during development. In production, set
-// `VITE_API_BASE_URL` to your backend URL (e.g. Railway) so the built
-// app talks to the live backend.
-const DEFAULT_API_BASE_URL = "";
+/**
+ * Frontend API client
+ * -------------------
+ * This file was rewritten to provide a single, predictable way of talking to
+ * the backend. Everything goes through the same axios instance so we avoid
+ * accidental GET/POST mismatches (which were causing the 405 errors) and we
+ * always apply the same auth / CSRF / error handling logic.
+ *
+ * Usage:
+ *   import api, { Api } from "@/api";
+ *   await api.get("/buysellapi/products/");
+ *   await Api.auth.login({ username, password });
+ *
+ * Legacy helpers are still exported at the bottom for backwards compatibility.
+ */
 
-const resolveApiBaseUrl = () => {
-  // Prefer Vite-style env variables
-  if (
-    typeof import.meta !== "undefined" &&
-    import.meta?.env?.VITE_API_BASE_URL
-  ) {
-    return import.meta.env.VITE_API_BASE_URL;
-  }
+// ---------------------------------------------------------------------------
+// Base URL resolution
+// ---------------------------------------------------------------------------
+const resolveBaseUrl = () => {
+  const candidates = [
+    typeof import.meta !== "undefined" ? import.meta.env?.VITE_API_BASE_URL : undefined,
+    typeof process !== "undefined" ? process.env?.VITE_API_BASE_URL : undefined,
+    typeof window !== "undefined" ? window.__ENV__?.VITE_API_BASE_URL : undefined,
+  ];
 
-  // Fallback to process.env (Next.js / CRA builds)
-  if (typeof process !== "undefined" && process?.env?.VITE_API_BASE_URL) {
-    return process.env.VITE_API_BASE_URL;
-  }
-
-  // Fallback to window-injected env (for static hosts)
-  if (typeof window !== "undefined" && window.__ENV__?.VITE_API_BASE_URL) {
-    return window.__ENV__.VITE_API_BASE_URL;
-  }
-
-  // If no environment-provided base is present, return empty string
-  // so axios uses relative URLs (current origin) and Vite proxy works.
-  return DEFAULT_API_BASE_URL;
-};
-
-const API_BASE_URL = resolveApiBaseUrl();
-
-// Helper to get CSRF token from cookie
-function getCookie(name) {
-  let cookieValue = null;
-  if (document.cookie && document.cookie !== "") {
-    const cookies = document.cookie.split(";");
-    for (let i = 0; i < cookies.length; i++) {
-      const cookie = cookies[i].trim();
-      if (cookie.substring(0, name.length + 1) === name + "=") {
-        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-        break;
-      }
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim() !== "") {
+      return candidate.trim().replace(/\/+$/, "");
     }
   }
-  return cookieValue;
-}
 
-// API wrapper for Django backend communication
-// Ensure baseURL doesn't have trailing slash to avoid double slashes
-const normalizedBaseURL = API_BASE_URL ? API_BASE_URL.replace(/\/+$/, "") : "";
+  // Default to relative paths so Vite proxy (localhost:5173 -> :8000) keeps working.
+  return "";
+};
 
-console.log("[API Config] API_BASE_URL:", API_BASE_URL);
-console.log("[API Config] Normalized baseURL:", normalizedBaseURL);
+const BASE_URL = resolveBaseUrl();
 
-const API = axios.create({
-  baseURL: normalizedBaseURL,
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
+const normalizePath = (path = "") => {
+  if (typeof path !== "string" || path.length === 0) {
+    throw new Error("API path must be a non-empty string.");
+  }
+  if (path.startsWith("http://") || path.startsWith("https://")) {
+    return path;
+  }
+  return path.startsWith("/") ? path : `/${path}`;
+};
+
+const getCookie = (name) => {
+  if (typeof document === "undefined") return null;
+  const cookies = document.cookie ? document.cookie.split(";") : [];
+  for (const cookie of cookies) {
+    const trimmed = cookie.trim();
+    if (trimmed.startsWith(`${name}=`)) {
+      return decodeURIComponent(trimmed.substring(name.length + 1));
+    }
+  }
+  return null;
+};
+
+// ---------------------------------------------------------------------------
+// Axios client
+// ---------------------------------------------------------------------------
+const api = axios.create({
+  baseURL: BASE_URL || undefined,
+  withCredentials: true,
   headers: {
     "Content-Type": "application/json",
   },
-  withCredentials: true, // Always send cookies
-  timeout: 30000, // 30 seconds timeout
-  timeoutErrorMessage:
-    "Request timed out. Please check your internet connection.",
+  timeout: 30000,
 });
 
-// Add request interceptor to attach JWT token and CSRF token to all requests
-API.interceptors.request.use(
+api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem("token");
-    const adminToken = localStorage.getItem("adminToken");
-    const authToken = token || adminToken;
-
-    if (authToken) {
-      config.headers.Authorization = `Bearer ${authToken}`;
+    const token = localStorage.getItem("token") || localStorage.getItem("adminToken");
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
 
-    // Attach CSRF token for unsafe methods
-    const unsafeMethods = ["post", "put", "patch", "delete"];
-    if (unsafeMethods.includes(config.method)) {
+    const unsafeMethods = new Set(["post", "put", "patch", "delete"]);
+    if (unsafeMethods.has((config.method || "").toLowerCase())) {
       const csrfToken = getCookie("csrftoken");
       if (csrfToken) {
         config.headers["X-CSRFToken"] = csrfToken;
@@ -88,417 +91,247 @@ API.interceptors.request.use(
     }
 
     config.withCredentials = true;
-
-    // Prevent accidental POST/PUT/PATCH/DELETE to the page origin (common with GitHub Pages)
-    try {
-      const unsafeMethods = ["post", "put", "patch", "delete"];
-      const methodIsUnsafe = unsafeMethods.includes(
-        (config.method || "").toLowerCase()
-      );
-
-      // Determine whether the request will target the same origin as the currently served page
-      const targetUrl = config.baseURL
-        ? new URL(config.baseURL.replace(/\/+$|$/, ""), window.location.origin)
-        : null;
-      const targetOrigin = targetUrl ? targetUrl.origin : null;
-      const pageOrigin = window.location.origin;
-
-      const isUsingRelativeUrl =
-        !config.baseURL && !config.url?.startsWith("http");
-      const isTargetSameOrigin = targetOrigin === pageOrigin;
-
-      if (methodIsUnsafe && (isUsingRelativeUrl || isTargetSameOrigin)) {
-        const message =
-          "Blocked unsafe request: no backend base URL configured. Set VITE_API_BASE_URL to your backend URL so POST/PUT/PATCH/DELETE target the API, not the static host.";
-        console.error("[API Guard] ", message, {
-          attemptedMethod: config.method?.toUpperCase(),
-          attemptedUrl: config.url,
-          baseURL: config.baseURL,
-          pageOrigin,
-        });
-
-        // Reject request early with a descriptive error to avoid 405 on static hosts.
-        return Promise.reject({
-          message,
-          name: "ApiConfigurationError",
-          config,
-        });
-      }
-    } catch (e) {
-      // If URL parsing fails, continue and let the request run so that dev experience isn't blocked.
-      console.warn(
-        "[API Guard] URL parsing failed, skipping same-origin safety check",
-        e
-      );
-    }
-
-    // Validate baseURL configuration
-    if (!config.baseURL && !config.url.startsWith("http")) {
-      console.warn(
-        "[API Warning] No baseURL configured and URL is not absolute. This may cause connection issues."
-      );
-    }
-
-    // Debug: Log the actual URL being called
-    const fullUrl = config.baseURL
-      ? (config.baseURL.endsWith("/")
-          ? config.baseURL.slice(0, -1)
-          : config.baseURL) +
-        (config.url.startsWith("/") ? config.url : "/" + config.url)
-      : config.url;
-    console.log(`[API] ${config.method?.toUpperCase()} ${fullUrl}`, {
-      baseURL: config.baseURL || "(using relative URL)",
-      url: config.url,
-      fullUrl,
-      timeout: config.timeout,
-    });
-
+    config.url = normalizePath(config.url);
     return config;
   },
-  (error) => {
-    console.error("[API] Request interceptor error:", error);
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
 
-// Add response interceptor to handle token refresh and errors
-API.interceptors.response.use(
-  (response) => {
-    return response;
-  },
+api.interceptors.response.use(
+  (response) => response,
   async (error) => {
-    const originalRequest = error.config;
+    const originalRequest = error.config || {};
+    const status = error.response?.status;
 
-    // If token expired (401) and we haven't tried to refresh yet
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    // Auto refresh tokens on 401 once.
+    if (status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
-
       const refreshToken = localStorage.getItem("refreshToken");
 
       if (refreshToken) {
         try {
-          // Try to refresh the token
-          // Use the same API instance to ensure consistent baseURL
-          const refreshUrl = normalizedBaseURL
-            ? `${normalizedBaseURL}/buysellapi/token/refresh/`
-            : "/buysellapi/token/refresh/";
-          const response = await axios.post(refreshUrl, {
-            refresh: refreshToken,
-          });
-
-          const { access } = response.data;
-          localStorage.setItem("token", access);
-
-          // Retry the original request with new token
-          originalRequest.headers.Authorization = `Bearer ${access}`;
-          return API(originalRequest);
+          const refreshResp = await axios.post(
+            `${BASE_URL || ""}/buysellapi/token/refresh/`,
+            { refresh: refreshToken },
+            { withCredentials: true }
+          );
+          const { access } = refreshResp.data || {};
+          if (access) {
+            localStorage.setItem("token", access);
+            originalRequest.headers = originalRequest.headers || {};
+            originalRequest.headers.Authorization = `Bearer ${access}`;
+            return api(originalRequest);
+          }
         } catch (refreshError) {
-          // Refresh failed, clear tokens and redirect to login
           localStorage.removeItem("token");
           localStorage.removeItem("adminToken");
           localStorage.removeItem("refreshToken");
           localStorage.removeItem("userData");
-          window.location.href = "/Login";
-          return Promise.reject(refreshError);
         }
       }
-    }
-
-    // Enhanced error logging for debugging
-    if (error.response) {
-      const { status, statusText, data, config } = error.response;
-      console.error(
-        `[API Error] ${config?.method?.toUpperCase()} ${config?.url}`,
-        {
-          status,
-          statusText,
-          data,
-          baseURL: config?.baseURL,
-          fullUrl: config?.baseURL
-            ? `${config.baseURL.replace(/\/+$/, "")}${
-                config.url.startsWith("/") ? config.url : "/" + config.url
-              }`
-            : config?.url,
-        }
-      );
-
-      // Log specific errors with more detail
-      if (status === 405) {
-        console.error("[API 405 Error] Method Not Allowed - Possible causes:", {
-          attemptedMethod: config?.method?.toUpperCase(),
-          attemptedUrl: config?.url,
-          baseURL: config?.baseURL,
-          fullUrl: config?.baseURL
-            ? `${config.baseURL.replace(/\/+$/, "")}${
-                config.url.startsWith("/") ? config.url : "/" + config.url
-              }`
-            : config?.url,
-          suggestion:
-            "Check if the endpoint supports this HTTP method or if the URL is correct",
-        });
-      } else if (status === 500) {
-        console.error("[API 500 Error] Internal Server Error:", {
-          url: config?.url,
-          method: config?.method?.toUpperCase(),
-          data: data,
-          suggestion: "Check backend logs for detailed error information",
-        });
-      } else if (status === 0 || statusText === "") {
-        // CORS or network issue
-        console.error(
-          "[API CORS/Network Error] Possible CORS or network issue:",
-          {
-            url: config?.url,
-            method: config?.method?.toUpperCase(),
-            baseURL: config?.baseURL,
-            suggestion: "Check CORS configuration in backend settings.py",
-          }
-        );
-      }
-    } else if (error.request) {
-      // Network error - no response received
-      const fullUrl = originalRequest?.baseURL
-        ? `${originalRequest.baseURL.replace(/\/+$/, "")}${
-            originalRequest.url.startsWith("/")
-              ? originalRequest.url
-              : "/" + originalRequest.url
-          }`
-        : originalRequest?.url;
-
-      console.error("[API Error] No response received (Network Error):", {
-        url: fullUrl,
-        method: originalRequest?.method?.toUpperCase(),
-        baseURL: originalRequest?.baseURL,
-        error: error.message,
-        code: error.code,
-        possibleCauses: [
-          "Backend server is down or unreachable",
-          "Network connection issue",
-          "CORS configuration problem",
-          "Firewall blocking the request",
-          "Backend URL is incorrect",
-        ],
-      });
-
-      // Provide more helpful error message
-      if (error.code === "ERR_NETWORK" || error.code === "ECONNABORTED") {
-        error.userMessage =
-          "Unable to connect to the server. Please check your internet connection and try again.";
-      } else if (
-        error.code === "ETIMEDOUT" ||
-        error.message?.includes("timeout")
-      ) {
-        error.userMessage =
-          "Request timed out. The server is taking too long to respond.";
-      } else {
-        error.userMessage =
-          "Network error. Please check your connection and try again.";
-      }
-    } else {
-      // Request setup error
-      console.error("[API Error] Request setup error:", {
-        message: error.message,
-        config: error.config,
-      });
-      error.userMessage = "Failed to send request. Please try again.";
     }
 
     return Promise.reject(error);
   }
 );
 
-export default API;
+// Convenience wrapper so every call goes through the same validation.
+const http = {
+  get: (path, config) => api.get(normalizePath(path), config),
+  delete: (path, config) => api.delete(normalizePath(path), config),
+  head: (path, config) => api.head(normalizePath(path), config),
+  options: (path, config) => api.options(normalizePath(path), config),
+  post: (path, data, config) => api.post(normalizePath(path), data, config),
+  put: (path, data, config) => api.put(normalizePath(path), data, config),
+  patch: (path, data, config) => api.patch(normalizePath(path), data, config),
+};
 
-// Product API helpers
-export const getProducts = (params = {}) =>
-  API.get("/buysellapi/products/", { params });
-export const getProduct = (slug) => API.get(`/buysellapi/products/${slug}/`);
-export const createProduct = (data) => API.post("/buysellapi/products/", data);
-export const updateProduct = (slug, data) =>
-  API.put(`/buysellapi/products/${slug}/`, data);
-export const deleteProduct = (slug) =>
-  API.delete(`/buysellapi/products/${slug}/`);
+// ---------------------------------------------------------------------------
+// High-level API surface grouped by domain
+// ---------------------------------------------------------------------------
+const Api = {
+  auth: {
+    login: (payload) => http.post("/buysellapi/token/", payload),
+    refresh: (payload) => http.post("/buysellapi/token/refresh/", payload),
+    profile: () => http.get("/buysellapi/users/me/"),
+    register: (payload) => http.post("/buysellapi/user/register/", payload),
+  },
+  products: {
+    list: (params) => http.get("/buysellapi/products/", { params }),
+    detail: (slug) => http.get(`/buysellapi/products/${slug}/`),
+    create: (payload) => http.post("/buysellapi/products/", payload),
+    update: (slug, payload) => http.put(`/buysellapi/products/${slug}/`, payload),
+    remove: (slug) => http.delete(`/buysellapi/products/${slug}/`),
+    reviews: {
+      list: (params) => http.get("/buysellapi/product-reviews/", { params }),
+      create: (payload) => http.post("/buysellapi/product-reviews/", payload),
+      update: (id, payload) => http.put(`/buysellapi/product-reviews/${id}/`, payload),
+      remove: (id) => http.delete(`/buysellapi/product-reviews/${id}/`),
+    },
+  },
+  orders: {
+    list: (params) => http.get("/buysellapi/orders/", { params }),
+    detail: (id) => http.get(`/buysellapi/orders/${id}/`),
+    create: (payload) => http.post("/buysellapi/orders/", payload),
+    update: (id, payload) => http.put(`/buysellapi/orders/${id}/`, payload),
+    remove: (id) => http.delete(`/buysellapi/orders/${id}/`),
+    adminList: (params) => http.get("/buysellapi/admin/orders/", { params }),
+  },
+  buy4me: {
+    list: (params) => http.get("/buysellapi/buy4me-requests/", { params }),
+    detail: (id) => http.get(`/buysellapi/buy4me-requests/${id}/`),
+    create: (payload) => http.post("/buysellapi/buy4me-requests/", payload),
+    update: (id, payload) => http.put(`/buysellapi/buy4me-requests/${id}/`, payload),
+    remove: (id) => http.delete(`/buysellapi/buy4me-requests/${id}/`),
+    admin: {
+      list: (params) => http.get("/buysellapi/admin/buy4me-requests/", { params }),
+      updateStatus: (id, status) =>
+        http.put(`/buysellapi/admin/buy4me-requests/${id}/status/`, { status }),
+      updateTracking: (id, payload) =>
+        http.put(`/buysellapi/admin/buy4me-requests/${id}/tracking/`, payload),
+      invoice: {
+        create: (id, payload) =>
+          http.post(`/buysellapi/admin/buy4me-requests/${id}/invoice/`, payload),
+        update: (id, payload) =>
+          http.put(`/buysellapi/admin/buy4me-requests/${id}/invoice/`, payload),
+      },
+    },
+  },
+  shipping: {
+    marks: (params) => http.get("/buysellapi/shipping-marks/", { params }),
+    dashboard: () => http.get("/buysellapi/shipping-dashboard/"),
+  },
+  alipay: {
+    payments: (params) => http.get("/api/admin/alipay-payments", { params }),
+    rate: () => http.get("/buysellapi/alipay-exchange-rate/"),
+  },
+  quickOrder: {
+    list: () => http.get("/buysellapi/quick-order-products/"),
+    adminList: () => http.get("/buysellapi/admin/quick-order-products/"),
+    adminDetail: (id) => http.get(`/buysellapi/admin/quick-order-products/${id}/`),
+    create: (payload) => http.post("/buysellapi/admin/quick-order-products/", payload),
+    update: (id, payload) =>
+      http.put(`/buysellapi/admin/quick-order-products/${id}/`, payload),
+    remove: (id) => http.delete(`/buysellapi/admin/quick-order-products/${id}/`),
+  },
+  categories: {
+    list: (params) => http.get("/buysellapi/categories/", { params }),
+    detail: (slug) => http.get(`/buysellapi/categories/${slug}/`),
+    create: (payload) => http.post("/buysellapi/categories/", payload),
+    update: (slug, payload) => http.put(`/buysellapi/categories/${slug}/`, payload),
+    remove: (slug) => http.delete(`/buysellapi/categories/${slug}/`),
+  },
+  productTypes: {
+    list: (params) => http.get("/buysellapi/product-types/", { params }),
+    detail: (slug) => http.get(`/buysellapi/product-types/${slug}/`),
+    create: (payload) => http.post("/buysellapi/product-types/", payload),
+    update: (slug, payload) => http.put(`/buysellapi/product-types/${slug}/`, payload),
+    remove: (slug) => http.delete(`/buysellapi/product-types/${slug}/`),
+  },
+  analytics: {
+    admin: (params) => http.get("/buysellapi/admin/analytics/", { params }),
+    dashboardSummary: () => http.get("/buysellapi/admin/dashboard-summary/"),
+  },
+  training: {
+    courses: (params) => http.get("/buysellapi/training-courses/", { params }),
+    bookings: (params) => http.get("/buysellapi/training-bookings/", { params }),
+    book: (payload) => http.post("/buysellapi/training-bookings/", payload),
+    adminBookings: (params) => http.get("/buysellapi/admin/training-bookings/", { params }),
+    adminCourses: (params) => http.get("/buysellapi/admin/training-courses/", { params }),
+    adminCourseDetail: (id) => http.get(`/buysellapi/admin/training-courses/${id}/`),
+    adminCreateCourse: (payload) =>
+      http.post("/buysellapi/admin/training-courses/", payload),
+    adminUpdateCourse: (id, payload) =>
+      http.put(`/buysellapi/admin/training-courses/${id}/`, payload),
+    adminDeleteCourse: (id) =>
+      http.delete(`/buysellapi/admin/training-courses/${id}/`),
+  },
+};
 
-// Product Review API helpers
-export const getProductReviews = (params = {}) =>
-  API.get("/buysellapi/product-reviews/", { params });
-export const createProductReview = (data) =>
-  API.post("/buysellapi/product-reviews/", data);
-export const updateProductReview = (id, data) =>
-  API.put(`/buysellapi/product-reviews/${id}/`, data);
-export const deleteProductReview = (id) =>
-  API.delete(`/buysellapi/product-reviews/${id}/`);
+// ---------------------------------------------------------------------------
+// Legacy helper exports (so existing imports keep working)
+// ---------------------------------------------------------------------------
+export default api;
+export { Api, http };
 
-// Order API helpers
-export const getOrders = (params = {}) =>
-  API.get("/buysellapi/orders/", { params });
-export const getOrder = (id) => API.get(`/buysellapi/orders/${id}/`);
-export const createOrder = (data) => API.post("/buysellapi/orders/", data);
-export const updateOrder = (id, data) =>
-  API.put(`/buysellapi/orders/${id}/`, data);
-export const deleteOrder = (id) => API.delete(`/buysellapi/orders/${id}/`);
-// Admin order helpers
-export const getAdminOrders = (params = {}) =>
-  API.get("/buysellapi/admin/orders/", { params });
+export const getProducts = Api.products.list;
+export const getProduct = Api.products.detail;
+export const createProduct = Api.products.create;
+export const updateProduct = Api.products.update;
+export const deleteProduct = Api.products.remove;
 
-// Buy4me Request API helpers (User)
-export const getBuy4meRequests = (params = {}) =>
-  API.get("/buysellapi/buy4me-requests/", { params });
-export const getBuy4meRequest = (id) =>
-  API.get(`/buysellapi/buy4me-requests/${id}/`);
-export const createBuy4meRequest = (data) =>
-  API.post("/buysellapi/buy4me-requests/", data);
-export const updateBuy4meRequest = (id, data) =>
-  API.put(`/buysellapi/buy4me-requests/${id}/`, data);
-export const deleteBuy4meRequest = (id) =>
-  API.delete(`/buysellapi/buy4me-requests/${id}/`);
+export const getProductReviews = Api.products.reviews.list;
+export const createProductReview = Api.products.reviews.create;
+export const updateProductReview = Api.products.reviews.update;
+export const deleteProductReview = Api.products.reviews.remove;
 
-// Buy4me Request API helpers (Admin)
-export const getAdminBuy4meRequests = (params = {}) =>
-  API.get("/buysellapi/admin/buy4me-requests/", { params });
-export const getAdminBuy4meRequest = (id) =>
-  API.get(`/buysellapi/admin/buy4me-requests/${id}/`);
-export const updateAdminBuy4meRequest = (id, data) =>
-  API.put(`/buysellapi/admin/buy4me-requests/${id}/`, data);
-export const deleteAdminBuy4meRequest = (id) =>
-  API.delete(`/buysellapi/admin/buy4me-requests/${id}/`);
-export const updateBuy4meRequestStatus = (id, status) =>
-  API.put(`/buysellapi/admin/buy4me-requests/${id}/status/`, { status });
-export const updateBuy4meRequestTracking = (id, tracking_status) =>
-  API.put(`/buysellapi/admin/buy4me-requests/${id}/tracking/`, {
-    tracking_status,
-  });
-export const createBuy4meRequestInvoice = (id, data) =>
-  API.post(`/buysellapi/admin/buy4me-requests/${id}/invoice/`, data);
-export const updateBuy4meRequestInvoiceStatus = (id, status) =>
-  API.put(`/buysellapi/admin/buy4me-requests/${id}/invoice/`, { status });
+export const getOrders = Api.orders.list;
+export const getOrder = Api.orders.detail;
+export const createOrder = Api.orders.create;
+export const updateOrder = Api.orders.update;
+export const deleteOrder = Api.orders.remove;
+export const getAdminOrders = Api.orders.adminList;
 
-// Training Booking API helpers (User)
-export const getTrainingBookings = (params = {}) =>
-  API.get("/buysellapi/training-bookings/", { params });
-export const getTrainingBooking = (id) =>
-  API.get(`/buysellapi/training-bookings/${id}/`);
-export const createTrainingBooking = (data) =>
-  API.post("/buysellapi/training-bookings/", data);
-export const updateTrainingBooking = (id, data) =>
-  API.put(`/buysellapi/training-bookings/${id}/`, data);
-export const deleteTrainingBooking = (id) =>
-  API.delete(`/buysellapi/training-bookings/${id}/`);
+export const getBuy4meRequests = Api.buy4me.list;
+export const getBuy4meRequest = Api.buy4me.detail;
+export const createBuy4meRequest = Api.buy4me.create;
+export const updateBuy4meRequest = Api.buy4me.update;
+export const deleteBuy4meRequest = Api.buy4me.remove;
+export const getAdminBuy4meRequests = Api.buy4me.admin.list;
+export const getAdminBuy4meRequest = Api.buy4me.detail;
+export const updateAdminBuy4meRequest = Api.buy4me.update;
+export const deleteAdminBuy4meRequest = Api.buy4me.remove;
+export const updateBuy4meRequestStatus = Api.buy4me.admin.updateStatus;
+export const updateBuy4meRequestTracking = Api.buy4me.admin.updateTracking;
+export const createBuy4meRequestInvoice = Api.buy4me.admin.invoice.create;
+export const updateBuy4meRequestInvoiceStatus = Api.buy4me.admin.invoice.update;
 
-// Admin Training Booking API helpers
-export const getAdminTrainingBookings = (params = {}) =>
-  API.get("/buysellapi/admin/training-bookings/", { params });
-export const getAdminTrainingBooking = (id) =>
-  API.get(`/buysellapi/admin/training-bookings/${id}/`);
-export const updateAdminTrainingBooking = (id, data) =>
-  API.put(`/buysellapi/admin/training-bookings/${id}/`, data);
-export const deleteAdminTrainingBooking = (id) =>
-  API.delete(`/buysellapi/admin/training-bookings/${id}/`);
+export const getQuickOrderProducts = Api.quickOrder.list;
+export const getAdminQuickOrderProducts = Api.quickOrder.adminList;
+export const getAdminQuickOrderProduct = Api.quickOrder.adminDetail;
+export const createQuickOrderProduct = Api.quickOrder.create;
+export const updateQuickOrderProduct = Api.quickOrder.update;
+export const deleteQuickOrderProduct = Api.quickOrder.remove;
 
-// Training Course API helpers (Public)
-export const getTrainingCourses = (params = {}) =>
-  API.get("/buysellapi/training-courses/", { params });
+export const getCategories = Api.categories.list;
+export const getCategory = Api.categories.detail;
+export const createCategory = Api.categories.create;
+export const updateCategory = Api.categories.update;
+export const deleteCategory = Api.categories.remove;
 
-// Admin Training Course API helpers
-export const getAdminTrainingCourses = (params = {}) =>
-  API.get("/buysellapi/admin/training-courses/", { params });
-export const getAdminTrainingCourse = (id) =>
-  API.get(`/buysellapi/admin/training-courses/${id}/`);
-export const createTrainingCourse = (data) =>
-  API.post("/buysellapi/admin/training-courses/", data);
-export const updateTrainingCourse = (id, data) =>
-  API.put(`/buysellapi/admin/training-courses/${id}/`, data);
-export const deleteTrainingCourse = (id) =>
-  API.delete(`/buysellapi/admin/training-courses/${id}/`);
+export const getProductTypes = Api.productTypes.list;
+export const getProductType = Api.productTypes.detail;
+export const createProductType = Api.productTypes.create;
+export const updateProductType = Api.productTypes.update;
+export const deleteProductType = Api.productTypes.remove;
 
-// Quick Order Product API helpers (Public)
-export const getQuickOrderProducts = () =>
-  API.get("/buysellapi/quick-order-products/");
+export const getAdminAnalytics = Api.analytics.admin;
+export const registerUser = Api.auth.register;
+export const getTrainingCourses = Api.training.courses;
+export const getTrainingBookings = Api.training.bookings;
+export const createTrainingBooking = Api.training.book;
+export const getAdminTrainingBookings = Api.training.adminBookings;
+export const getAdminTrainingCourses = Api.training.adminCourses;
+export const getAdminTrainingCourse = Api.training.adminCourseDetail;
+export const createTrainingCourse = Api.training.adminCreateCourse;
+export const updateTrainingCourse = Api.training.adminUpdateCourse;
+export const deleteTrainingCourse = Api.training.adminDeleteCourse;
 
-// Quick Order Product API helpers (Admin)
-export const getAdminQuickOrderProducts = () =>
-  API.get("/buysellapi/admin/quick-order-products/");
-export const getAdminQuickOrderProduct = (id) =>
-  API.get(`/buysellapi/admin/quick-order-products/${id}/`);
-export const createQuickOrderProduct = (data) =>
-  API.post("/buysellapi/admin/quick-order-products/", data);
-export const updateQuickOrderProduct = (id, data) =>
-  API.put(`/buysellapi/admin/quick-order-products/${id}/`, data);
-export const deleteQuickOrderProduct = (id) =>
-  API.delete(`/buysellapi/admin/quick-order-products/${id}/`);
-
-// Category API helpers
-export const getCategories = (params = {}) =>
-  API.get("/buysellapi/categories/", { params });
-export const getCategory = (slug) => API.get(`/buysellapi/categories/${slug}/`);
-export const createCategory = (data) =>
-  API.post("/buysellapi/categories/", data);
-export const updateCategory = (slug, data) =>
-  API.put(`/buysellapi/categories/${slug}/`, data);
-export const deleteCategory = (slug) =>
-  API.delete(`/buysellapi/categories/${slug}/`);
-
-// Product Type API helpers
-export const getProductTypes = (params = {}) =>
-  API.get("/buysellapi/product-types/", { params });
-export const getProductType = (slug) =>
-  API.get(`/buysellapi/product-types/${slug}/`);
-export const createProductType = (data) =>
-  API.post("/buysellapi/product-types/", data);
-export const updateProductType = (slug, data) =>
-  API.put(`/buysellapi/product-types/${slug}/`, data);
-export const deleteProductType = (slug) =>
-  API.delete(`/buysellapi/product-types/${slug}/`);
-
-// Analytics API helpers
-export const getAdminAnalytics = (params = {}) =>
-  API.get("/buysellapi/admin/analytics/", { params });
-
-// User registration API helper
-export const registerUser = (data) =>
-  API.post("/buysellapi/user/register/", data);
-
-// Connection test utility
 export const testConnection = async () => {
   try {
-    // Try a simple GET request to test connectivity
-    const response = await API.get("/buysellapi/products/", {
-      params: { limit: 1 },
-      timeout: 10000, // 10 seconds for connection test
-    });
+    await http.get("/buysellapi/products/", { params: { limit: 1 }, timeout: 10000 });
     return {
       success: true,
       message: "Connection successful",
-      baseURL: normalizedBaseURL || "(relative URL)",
-      status: response.status,
+      baseURL: BASE_URL || "(relative)",
     };
   } catch (error) {
-    if (error.response) {
-      // Got a response, so connection works but endpoint might have issues
-      return {
-        success: true,
-        message: "Connection successful (endpoint returned error)",
-        baseURL: normalizedBaseURL || "(relative URL)",
-        status: error.response.status,
-        warning: true,
-      };
-    } else if (error.request) {
-      // No response received - connection issue
-      return {
-        success: false,
-        message: "Cannot connect to backend",
-        baseURL: normalizedBaseURL || "(relative URL)",
-        error: error.message || "Network error",
-        suggestion: normalizedBaseURL
-          ? "Check if the backend URL is correct and the server is running"
-          : "VITE_API_BASE_URL is not set. Set it in GitHub Secrets (Settings → Secrets and variables → Actions).",
-      };
-    } else {
-      return {
-        success: false,
-        message: "Request setup failed",
-        error: error.message,
-      };
-    }
+    return {
+      success: false,
+      message: error.response ? "Backend responded with an error" : "Cannot reach backend",
+      status: error.response?.status,
+      baseURL: BASE_URL || "(relative)",
+      detail: error.message,
+    };
   }
 };
