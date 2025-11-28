@@ -202,11 +202,28 @@ const Signup = () => {
 
         toast.error(toastMessage);
       } else if (err.request) {
-        // Request made but no response received
-        toast.error("Network error. Please check your internet connection.");
-        setErrors({
-          form: "Cannot connect to server. Please try again later.",
-        });
+        // Request made but no response received (timeout or network error)
+        // Check if it's a timeout
+        if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+          // Timeout - account might have been created, check with user
+          toast.warning(
+            "Request timed out. Your account may have been created. Please try logging in.",
+            { autoClose: 8000 }
+          );
+          setErrors({
+            form: "Request timed out. If your account was created, please try logging in. Otherwise, please try again.",
+          });
+          // Still navigate to login in case account was created
+          setTimeout(() => {
+            navigate("/Login");
+          }, 3000);
+        } else {
+          // Actual network error
+          toast.error("Network error. Please check your internet connection.");
+          setErrors({
+            form: "Cannot connect to server. Please try again later.",
+          });
+        }
       } else {
         // Something else happened
         toast.error("An unexpected error occurred. Please try again.");
