@@ -397,7 +397,18 @@ const UsersManagement = () => {
       setAllTabs(combinedTabs);
     } catch (err) {
       console.error("Failed to assign tab to admins:", err);
-      toast.error("Failed to assign tab to admins");
+      console.error("Error details:", {
+        message: err.message,
+        response: err.response?.data,
+        status: err.response?.status,
+        tabSlug,
+        assign,
+      });
+      const errorMsg = err.response?.data?.error || 
+                      err.response?.data?.detail || 
+                      err.message || 
+                      "Failed to assign tab to admins";
+      toast.error(errorMsg);
     } finally {
       setTabsLoading(false);
     }
