@@ -17,6 +17,7 @@ import Contact from "./pages/Contact";
 import PlaceOrder from "./pages/PlaceOrder";
 import Training from "./pages/Quicklinks/Training"; 
 import AlipayPayment from "./pages/Quicklinks/AlipayPayment";
+import Gallery from "./pages/Gallery";
 import Payment from "./pages/Quicklinks/Payment";
 import Favorites from "./pages/Favorites";
 import MyProfile from "./components/MyProfile";
@@ -102,6 +103,7 @@ function App() {
                   <Route path="/Suppliers" element={<Suppliers />} />
                   <Route path="/Training" element={<Training />} />
                   <Route path="/tracking" element={<TrackingPage />} />
+                  <Route path="/Gallery" element={<Gallery />} />
 
                   {/* Protected routes - require login */}
                   <Route

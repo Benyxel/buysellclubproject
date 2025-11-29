@@ -723,11 +723,7 @@ const AdminDashboard = () => {
       case "categories":
         return <CategoriesTypesManagement />;
       case "gallery":
-        return (
-          <div className="p-6">
-            <GalleryManagement />
-          </div>
-        );
+        return <GalleryManagement />;
       case "analytics":
         return <Analytics />;
       default:

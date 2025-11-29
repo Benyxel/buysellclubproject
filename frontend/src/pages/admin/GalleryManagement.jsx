@@ -148,11 +148,14 @@ const GalleryManagement = () => {
       fetchGalleryItems();
     } catch (error) {
       console.error("Error saving gallery item:", error);
-      toast.error(
+      console.error("Error response:", error.response?.data);
+      const errorMessage = 
+        error.response?.data?.error ||
         error.response?.data?.detail ||
-          error.response?.data?.message ||
-          "Failed to save gallery item"
-      );
+        error.response?.data?.message ||
+        error.message ||
+        "Failed to save gallery item";
+      toast.error(errorMessage);
     } finally {
       setUploading(false);
     }
@@ -460,6 +463,10 @@ const GalleryManagement = () => {
                   src={item.image_url}
                   alt={item.title}
                   className="w-full h-full object-cover"
+                  onError={(e) => {
+                    e.target.onerror = null;
+                    e.target.src = "https://via.placeholder.com/400x400?text=Image+Not+Found";
+                  }}
                 />
                 {item.is_featured && (
                   <div className="absolute top-2 right-2 bg-yellow-500 text-white px-2 py-1 rounded text-xs font-semibold">
