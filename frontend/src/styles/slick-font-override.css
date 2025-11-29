@@ -1,0 +1,12 @@
+@font-face {
+  font-family: 'slick-local';
+  src: url('/buysellclubproject/public/fonts/slick.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Optional: map the slick font family name used by the library to the local font */
+.slick-slider, .slick-track, .slick-list {
+  font-family: 'slick-local', sans-serif;
+}

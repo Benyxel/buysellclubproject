@@ -4,7 +4,9 @@
  */
 
 // Get the base path from environment variable (set during build)
-const BASE_PATH = import.meta.env.VITE_BASE_PATH || '/buysellclubproject';
+// Use Vite's BASE_URL which automatically matches the `base` config in vite.config.js
+// For local dev, this will be "/", for production builds it can be "/buysellclubproject"
+const BASE_PATH = import.meta.env.VITE_BASE_PATH || import.meta.env.BASE_URL || '/buysellclubproject';
 
 /**
  * Get the base path

@@ -1,5 +1,6 @@
 import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
+import "./styles/slick-font-override.css";
 import "./index.css";
 import App from "./App.jsx";
 import "slick-carousel/slick/slick.css";
@@ -9,9 +10,9 @@ import ShopContextProvider from "./context/ShopContext";
 // Note: Dev API mock removed to use real backend
 
 // Get base path from environment variable (set during build for GitHub Pages)
-// Defaults to '/buysellclubproject' to match vite.config.js
-// Vite replaces import.meta.env.VITE_BASE_PATH at build time
-const BASE_PATH = import.meta.env.VITE_BASE_PATH || "/buysellclubproject";
+// Use `VITE_BASE_PATH` if present; fallback to root '/'. This allows the
+// Router basename to match `VITE_BASE_PATH` in both dev and production.
+const BASE_PATH = import.meta.env.VITE_BASE_PATH || "/";
 
 // Debug: Log base path and environment info
 console.log("[App] Initializing...");
@@ -75,9 +76,7 @@ try {
 // the Vite `public/` folder so it will be copied to the site root on build.
 if ("serviceWorker" in navigator) {
   try {
-    const base = (
-      import.meta.env.VITE_BASE_PATH || "/buysellclubproject"
-    ).replace(/\/$/, "");
+    const base = (BASE_PATH || "/").replace(/\/$/, "");
     const swUrl = `${base}/sw.js`;
     navigator.serviceWorker
       .register(swUrl)
